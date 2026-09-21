@@ -13,13 +13,12 @@ const version = "0.1.0"
 
 func main() {
 	loadDotEnv()
-	cmd, live := parseArgs(os.Args[1:])
-	switch cmd {
+	flags := parseArgs(os.Args[1:])
+	switch flags.cmd {
 	case "demo":
 		cfg := pipeline.DefaultConfig()
-		if live {
-			cfg.Live = true
-		}
+		cfg.Live = flags.live
+		cfg.ForceJev = flags.jev
 		res, err := pipeline.Run(context.Background(), cfg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "demo: %v\n", err)
@@ -31,26 +30,39 @@ func main() {
 	case "help", "-h", "--help":
 		fmt.Print(usage())
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", cmd, usage())
+		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", flags.cmd, usage())
 		os.Exit(2)
 	}
 }
 
-func parseArgs(args []string) (cmd string, live bool) {
-	cmd = "demo"
+type cliFlags struct {
+	cmd  string
+	live bool
+	jev  bool
+}
+
+func parseArgs(args []string) cliFlags {
+	f := cliFlags{cmd: "demo"}
 	if len(args) == 0 {
-		return cmd, false
+		return f
 	}
-	cmd = args[0]
-	if cmd == "--live" {
-		return "demo", true
+	switch args[0] {
+	case "--live":
+		f.live = true
+	case "--jev":
+		f.jev = true
+	default:
+		f.cmd = args[0]
 	}
 	for _, a := range args[1:] {
-		if a == "--live" {
-			live = true
+		switch a {
+		case "--live":
+			f.live = true
+		case "--jev":
+			f.jev = true
 		}
 	}
-	return cmd, live
+	return f
 }
 
 func usage() string {
@@ -60,11 +72,13 @@ Pulse on Monad — auditable off-chain trading agent
 Usage:
   pulse demo           one simulated decision → audit JSONL → dry-run stamp → fake outcome → weight update
   pulse demo --live    same, then broadcast stamp() on Monad testnet (needs PRIVATE_KEY + testnet MON)
+  pulse demo --jev     require TypeSafe Jev (TYPESAFE_API_KEY / JEV_API_KEY); do not stub
   pulse version
 
 Live can also be enabled with PULSE_STAMP_LIVE=1.
+With TYPESAFE_API_KEY set, demo calls native TypeSafe Jev; otherwise the soft gate stubs.
 
-Env: see repo-root .env.example. Never commit a real private key.
-Default is dry-run (CI-safe). --live spends testnet MON.
+Env: see repo-root .env.example. Never commit a real private key or TypeSafe key.
+Default stamp is dry-run (CI-safe). --live spends testnet MON.
 `) + "\n"
 }

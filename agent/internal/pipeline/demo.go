@@ -30,6 +30,10 @@ type Config struct {
 	FakePnL float64
 	// Live broadcasts stamp() on Monad. Default false (dry-run / CI).
 	Live bool
+	// ForceJev requires a TypeSafe/Jev key and will not silently stub.
+	ForceJev bool
+	// Jev overrides NewFromEnv (tests inject a mock HTTP client).
+	Jev *jev.SoftGate
 }
 
 type Result struct {
@@ -92,10 +96,18 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 
 	eng := risk.New(st.Risk)
 	now := time.Now().UTC()
+	// Hard risk is code-only and MUST run before the optional Jev soft gate.
 	verdict := eng.Check(intent, now)
 
 	recent, _ := outStore.Recent(5)
-	soft := jev.NewFromEnv().Evaluate(intent, recent)
+	gate := cfg.Jev
+	if gate == nil {
+		gate = jev.NewFromEnv()
+	}
+	if cfg.ForceJev && !gate.Enabled() {
+		return nil, fmt.Errorf("demo --jev requires TYPESAFE_API_KEY or JEV_API_KEY")
+	}
+	soft := gate.Evaluate(ctx, intent, recent)
 
 	final := intent
 	if !verdict.Allow {
@@ -114,14 +126,18 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	kronosHash, _ := audit.HashInputs(feat)
 	planHash, _ := audit.HashInputs(cands)
 	riskHash, _ := audit.HashInputs(intent)
-	jevHash, _ := audit.HashInputs(map[string]any{"enabled": soft.Enabled})
+	jevHash, _ := audit.HashInputs(map[string]any{
+		"model_id": soft.ModelID,
+		"source":   soft.Source,
+		"state":    soft.Prompt,
+	})
 
 	rec.Steps = []audit.Step{
 		{Name: "observe", ModelID: "kline", ModelVersion: "mock-1", InputsHash: obsHash, Outputs: audit.MustRaw(q)},
 		{Name: "kronos", ModelID: "kronos", ModelVersion: feat.Source, InputsHash: kronosHash, Outputs: audit.MustRaw(feat)},
 		{Name: "plan", ModelID: "conservative-planner", ModelVersion: "1", InputsHash: planHash, Outputs: audit.MustRaw(map[string]any{"picked": picked, "candidates": cands})},
 		{Name: "risk", ModelID: "hard-risk", ModelVersion: "code", InputsHash: riskHash, Outputs: audit.MustRaw(verdict), Risk: &audit.RiskIO{Pass: verdict.Allow, Reason: verdict.Reason}},
-		{Name: "jev", ModelID: "jev-soft-gate", ModelVersion: "stub", InputsHash: jevHash, Outputs: audit.MustRaw(soft), Jev: &audit.JevIO{Prompt: soft.Prompt, Verdict: boolStr(soft.Pass), Reason: soft.Reason}},
+		{Name: "jev", ModelID: soft.ModelID, ModelVersion: soft.Source, InputsHash: jevHash, Outputs: audit.MustRaw(soft.AuditSafe()), Jev: jevIO(soft)},
 		{Name: "execute", ModelID: "sim-executor", ModelVersion: "1", InputsHash: riskHash, Outputs: audit.MustRaw(fill)},
 	}
 	rec.FinalAction = final.Action
@@ -229,7 +245,7 @@ func Format(res *Result) string {
 	riskStep := findStep(res.Record, "risk")
 	fmt.Fprintf(&b, "4. Hard risk  %s  %s\n", passFail(riskStep), reasonOf(riskStep))
 	jevStep := findStep(res.Record, "jev")
-	fmt.Fprintf(&b, "5. Jev        stub  %s  %s\n", passFail(jevStep), jevReason(jevStep))
+	fmt.Fprintf(&b, "5. Jev        %s  %s  %s\n", jevSource(jevStep), passFail(jevStep), jevReason(jevStep))
 	fmt.Fprintf(&b, "6. Execute    sim  action=%s  size_hint=%d\n", res.Record.FinalAction, res.Record.SizeHint)
 	fmt.Fprintf(&b, "7. Audit      run_id=%s\n", res.Record.RunID)
 	fmt.Fprintf(&b, "              decisionHash=%s\n", res.Record.DecisionHash)
@@ -310,6 +326,27 @@ func jevReason(s *audit.Step) string {
 		return s.Jev.Reason
 	}
 	return ""
+}
+
+func jevSource(s *audit.Step) string {
+	if s == nil {
+		return "?"
+	}
+	if s.ModelVersion != "" {
+		return s.ModelVersion
+	}
+	return s.ModelID
+}
+
+func jevIO(v jev.Verdict) *audit.JevIO {
+	return &audit.JevIO{
+		Prompt:    v.Prompt,
+		Verdict:   boolStr(v.Pass),
+		Reason:    v.Reason,
+		ModelID:   v.ModelID,
+		Questions: audit.MustRaw(v.Questions),
+		Answers:   audit.MustRaw(v.Answers),
+	}
 }
 
 func trim(s string, n int) string {

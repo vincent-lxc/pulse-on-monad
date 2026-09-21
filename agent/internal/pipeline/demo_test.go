@@ -2,9 +2,14 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/vincent-lxc/pulse-on-monad/agent/internal/jev"
 	"github.com/vincent-lxc/pulse-on-monad/agent/internal/stamp"
 )
 
@@ -12,6 +17,8 @@ func TestDemoLoopDryRun(t *testing.T) {
 	t.Setenv("PULSE_STAMP_LIVE", "")
 	t.Setenv("PULSE_LIVE_STAMP", "")
 	t.Setenv("PRIVATE_KEY", "")
+	t.Setenv("TYPESAFE_API_KEY", "")
+	t.Setenv("JEV_API_KEY", "")
 	cfg := Config{AgentID: "pulse-test", DataDir: t.TempDir(), FakePnL: 1.5, Live: false}
 	res, err := Run(context.Background(), cfg)
 	if err != nil {
@@ -74,5 +81,63 @@ func TestFormatLivePrintsExplorer(t *testing.T) {
 	}
 	if !strings.Contains(out, "MATCH") || !strings.Contains(out, "receipt_id=9") {
 		t.Fatalf("format missing readback:\n%s", out)
+	}
+}
+
+func TestForceJevWithoutKeyFails(t *testing.T) {
+	t.Setenv("TYPESAFE_API_KEY", "")
+	t.Setenv("JEV_API_KEY", "")
+	cfg := Config{AgentID: "pulse-test", DataDir: t.TempDir(), FakePnL: 1.5, ForceJev: true}
+	_, err := Run(context.Background(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "TYPESAFE_API_KEY") {
+		t.Fatalf("expected key error, got %v", err)
+	}
+}
+
+func TestPipelineUsesMockJevAfterHardRisk(t *testing.T) {
+	var sawState string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		sawState = string(raw)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"model":"jev-1.13.0","answers":{"allow_action":{"type":"noul","noul":0.88},"confidence":{"type":"score","score":3}}}`))
+	}))
+	defer srv.Close()
+
+	cfg := Config{
+		AgentID: "pulse-test",
+		DataDir: t.TempDir(),
+		FakePnL: 1.5,
+		Jev:     &jev.SoftGate{Endpoint: srv.URL, APIKey: "mock-key", HTTP: srv.Client()},
+	}
+	res, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sawState, `"model":"jev-latest"`) {
+		t.Fatalf("expected systemone body, got %s", sawState)
+	}
+	riskIdx, jevIdx := -1, -1
+	for i, s := range res.Record.Steps {
+		if s.Name == "risk" {
+			riskIdx = i
+		}
+		if s.Name == "jev" {
+			jevIdx = i
+		}
+	}
+	if riskIdx < 0 || jevIdx < 0 || riskIdx > jevIdx {
+		t.Fatalf("hard risk must run before Jev: risk=%d jev=%d", riskIdx, jevIdx)
+	}
+	jevStep := findStep(res.Record, "jev")
+	if jevStep.ModelID != "jev-1.13.0" || jevStep.Jev == nil || jevStep.Jev.Verdict != "pass" {
+		t.Fatalf("audit jev %+v", jevStep)
+	}
+	if strings.Contains(string(jevStep.Outputs), "mock-key") {
+		t.Fatal("audit leaked API key")
+	}
+	blob, _ := json.Marshal(res.Record)
+	if strings.Contains(string(blob), "mock-key") {
+		t.Fatal("record leaked API key")
 	}
 }

@@ -49,11 +49,14 @@ type RiskIO struct {
 	Reason string `json:"reason"`
 }
 
-// JevIO is optional soft-gate I/O. Omitted entirely when Jev is disabled.
+// JevIO is optional soft-gate I/O. Never store an API key here.
 type JevIO struct {
-	Prompt  string `json:"prompt,omitempty"`
-	Verdict string `json:"verdict,omitempty"`
-	Reason  string `json:"reason,omitempty"`
+	Prompt    string          `json:"prompt,omitempty"`
+	Verdict   string          `json:"verdict,omitempty"`
+	Reason    string          `json:"reason,omitempty"`
+	ModelID   string          `json:"model_id,omitempty"`
+	Questions json.RawMessage `json:"questions,omitempty"`
+	Answers   json.RawMessage `json:"answers,omitempty"`
 }
 
 type canonicalRecord struct {
