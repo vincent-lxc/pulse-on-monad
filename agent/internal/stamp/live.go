@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"reflect"
 	"strings"
 	"time"
 
@@ -152,27 +153,256 @@ func callGetReceipt(ctx context.Context, client *ethclient.Client, to common.Add
 	return unpackReceipt(raw)
 }
 
-func unpackReceipt(raw []byte) (*OnchainReceipt, error) {
-	type tuple struct {
-		DecisionHash [32]byte
-		SymbolID     *big.Int
-		SizeHint     *big.Int
-		Action       uint8
-		Note         string
-		StampedAt    uint64
-		Stamper      common.Address
+// receiptArgs is the Solidity Receipt tuple flattened. A function returning
+// one struct encodes identically to returning its fields, and unpacking as
+// seven arguments avoids go-ethereum's tuple→struct setArray panic.
+func receiptArgs() abi.Arguments {
+	must := func(typ string) abi.Type {
+		t, err := abi.NewType(typ, "", nil)
+		if err != nil {
+			panic(err)
+		}
+		return t
 	}
-	var t tuple
-	if err := contractABI().UnpackIntoInterface(&t, "getReceipt", raw); err != nil {
+	return abi.Arguments{
+		{Name: "decisionHash", Type: must("bytes32")},
+		{Name: "symbolId", Type: must("uint256")},
+		{Name: "sizeHint", Type: must("uint256")},
+		{Name: "action", Type: must("uint8")},
+		{Name: "note", Type: must("string")},
+		{Name: "stampedAt", Type: must("uint64")},
+		{Name: "stamper", Type: must("address")},
+	}
+}
+
+func unpackReceipt(raw []byte) (rec *OnchainReceipt, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			rec = nil
+			err = fmt.Errorf("stamp: unpack getReceipt panic: %v", r)
+		}
+	}()
+	if len(raw) < 32 {
+		return nil, fmt.Errorf("stamp: empty getReceipt return")
+	}
+
+	// Official path: ABI knows Receipt is a dynamic tuple, so eth_call data
+	// starts with an offset (0x20) then the 7-field body.
+	if method, ok := contractABI().Methods["getReceipt"]; ok {
+		if vals, e := method.Outputs.Unpack(raw); e == nil && len(vals) == 1 {
+			if rec, e := receiptFromValue(vals[0]); e == nil {
+				return rec, nil
+			}
+		}
+	}
+
+	// Fallback: unpack the 7 fields from the tuple body (with or without offset).
+	body := raw
+	if off, ok := leadingOffset(raw); ok {
+		body = raw[off:]
+	}
+	vals, err := receiptArgs().Unpack(body)
+	if err != nil {
 		return nil, fmt.Errorf("stamp: unpack getReceipt: %w", err)
 	}
+	return receiptFromSlice(vals)
+}
+
+func leadingOffset(raw []byte) (int, bool) {
+	if len(raw) < 32 {
+		return 0, false
+	}
+	off := new(big.Int).SetBytes(raw[:32])
+	if !off.IsUint64() {
+		return 0, false
+	}
+	n := int(off.Uint64())
+	if n >= 32 && n < len(raw) && n%32 == 0 {
+		return n, true
+	}
+	return 0, false
+}
+
+func receiptFromSlice(vals []any) (*OnchainReceipt, error) {
+	if len(vals) != 7 {
+		return nil, fmt.Errorf("stamp: getReceipt got %d fields, want 7", len(vals))
+	}
+	hash, err := asBytes32(vals[0])
+	if err != nil {
+		return nil, err
+	}
+	symbolID, err := asBig(vals[1])
+	if err != nil {
+		return nil, err
+	}
+	sizeHint, err := asBig(vals[2])
+	if err != nil {
+		return nil, err
+	}
+	action, err := asUint8(vals[3])
+	if err != nil {
+		return nil, err
+	}
+	note, ok := vals[4].(string)
+	if !ok {
+		return nil, fmt.Errorf("stamp: note is %T", vals[4])
+	}
+	stampedAt, err := asUint64(vals[5])
+	if err != nil {
+		return nil, err
+	}
+	stamper, err := asAddress(vals[6])
+	if err != nil {
+		return nil, err
+	}
 	return &OnchainReceipt{
-		DecisionHash: t.DecisionHash,
-		SymbolID:     t.SymbolID,
-		SizeHint:     t.SizeHint,
-		Action:       t.Action,
-		Note:         t.Note,
-		StampedAt:    t.StampedAt,
-		Stamper:      t.Stamper,
+		DecisionHash: hash,
+		SymbolID:     symbolID,
+		SizeHint:     sizeHint,
+		Action:       action,
+		Note:         note,
+		StampedAt:    stampedAt,
+		Stamper:      stamper,
 	}, nil
+}
+
+func receiptFromValue(v any) (*OnchainReceipt, error) {
+	if sl, ok := v.([]any); ok {
+		return receiptFromSlice(sl)
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Pointer {
+		if rv.IsNil() {
+			return nil, fmt.Errorf("stamp: nil getReceipt tuple")
+		}
+		rv = rv.Elem()
+	}
+	if rv.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("stamp: getReceipt tuple is %T", v)
+	}
+	byName := map[string]any{}
+	for i := 0; i < rv.NumField(); i++ {
+		byName[normName(rv.Type().Field(i).Name)] = rv.Field(i).Interface()
+	}
+	pick := func(names ...string) (any, bool) {
+		for _, n := range names {
+			if v, ok := byName[normName(n)]; ok {
+				return v, true
+			}
+		}
+		return nil, false
+	}
+	get := func(names ...string) (any, error) {
+		v, ok := pick(names...)
+		if !ok {
+			return nil, fmt.Errorf("stamp: missing field %v", names)
+		}
+		return v, nil
+	}
+	h, err := get("decisionHash")
+	if err != nil {
+		return nil, err
+	}
+	sid, err := get("symbolId", "symbolID")
+	if err != nil {
+		return nil, err
+	}
+	sz, err := get("sizeHint")
+	if err != nil {
+		return nil, err
+	}
+	act, err := get("action")
+	if err != nil {
+		return nil, err
+	}
+	note, err := get("note")
+	if err != nil {
+		return nil, err
+	}
+	ts, err := get("stampedAt")
+	if err != nil {
+		return nil, err
+	}
+	st, err := get("stamper")
+	if err != nil {
+		return nil, err
+	}
+	return receiptFromSlice([]any{h, sid, sz, act, note, ts, st})
+}
+
+func normName(s string) string {
+	return strings.ToLower(strings.ReplaceAll(s, "_", ""))
+}
+
+func asBytes32(v any) ([32]byte, error) {
+	switch t := v.(type) {
+	case [32]byte:
+		return t, nil
+	case []byte:
+		if len(t) != 32 {
+			return [32]byte{}, fmt.Errorf("stamp: bytes32 len %d", len(t))
+		}
+		var out [32]byte
+		copy(out[:], t)
+		return out, nil
+	default:
+		return [32]byte{}, fmt.Errorf("stamp: bytes32 is %T", v)
+	}
+}
+
+func asBig(v any) (*big.Int, error) {
+	switch t := v.(type) {
+	case *big.Int:
+		return t, nil
+	case big.Int:
+		n := t
+		return &n, nil
+	default:
+		return nil, fmt.Errorf("stamp: uint256 is %T", v)
+	}
+}
+
+func asUint8(v any) (uint8, error) {
+	switch t := v.(type) {
+	case uint8:
+		return t, nil
+	case uint16:
+		return uint8(t), nil
+	case uint64:
+		return uint8(t), nil
+	case *big.Int:
+		if t == nil || !t.IsUint64() || t.Uint64() > 255 {
+			return 0, fmt.Errorf("stamp: action out of range")
+		}
+		return uint8(t.Uint64()), nil
+	default:
+		return 0, fmt.Errorf("stamp: uint8 is %T", v)
+	}
+}
+
+func asUint64(v any) (uint64, error) {
+	switch t := v.(type) {
+	case uint64:
+		return t, nil
+	case uint32:
+		return uint64(t), nil
+	case *big.Int:
+		if t == nil || !t.IsUint64() {
+			return 0, fmt.Errorf("stamp: uint64 out of range")
+		}
+		return t.Uint64(), nil
+	default:
+		return 0, fmt.Errorf("stamp: uint64 is %T", v)
+	}
+}
+
+func asAddress(v any) (common.Address, error) {
+	switch t := v.(type) {
+	case common.Address:
+		return t, nil
+	case [20]byte:
+		return common.Address(t), nil
+	default:
+		return common.Address{}, fmt.Errorf("stamp: address is %T", v)
+	}
 }

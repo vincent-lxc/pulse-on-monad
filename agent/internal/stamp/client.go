@@ -149,28 +149,38 @@ func (c Config) Stamp(ctx context.Context, req Request) (*Result, error) {
 	out.TxHash = signed.Hash().Hex()
 	out.ExplorerURL = ExplorerTxURL(out.TxHash)
 
-	rcpt, err := waitReceipt(ctx, client, signed.Hash())
+	// Stamp already landed. Readback must never panic or fail the send.
+	fillReadback(ctx, client, c.Contract, signed.Hash(), req.DecisionHash, out)
+	return out, nil
+}
+
+func fillReadback(ctx context.Context, client *ethclient.Client, to common.Address, txHash common.Hash, want [32]byte, out *Result) {
+	defer func() {
+		if r := recover(); r != nil {
+			out.ReadbackErr = fmt.Sprintf("stamp: readback panic: %v", r)
+		}
+	}()
+	rcpt, err := waitReceipt(ctx, client, txHash)
 	if err != nil {
 		out.ReadbackErr = err.Error()
-		return out, nil
+		return
 	}
 	if rcpt.Status == 0 {
 		out.ReadbackErr = "stamp: transaction reverted"
-		return out, nil
+		return
 	}
 	id, err := ParseStampedID(rcpt.Logs)
 	if err != nil {
 		out.ReadbackErr = err.Error()
-		return out, nil
+		return
 	}
 	out.ReceiptID = id.String()
 
-	on, err := callGetReceipt(ctx, client, c.Contract, id)
+	on, err := callGetReceipt(ctx, client, to, id)
 	if err != nil {
 		out.ReadbackErr = err.Error()
-		return out, nil
+		return
 	}
 	out.OnchainDecisionHash = "0x" + hex.EncodeToString(on.DecisionHash[:])
-	out.HashMatch = on.DecisionHash == req.DecisionHash
-	return out, nil
+	out.HashMatch = on.DecisionHash == want
 }
