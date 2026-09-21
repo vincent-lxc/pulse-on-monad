@@ -220,6 +220,10 @@ Pulse stamps **without** minting an agent NFT. The `erc8004` package is a config
 3. `agentId` is the ERC-721 `tokenId`. Global id: `eip155:10143:0x8004A818BFB912233c491871b3d84c89A494BD9e / <agentId>`.
 4. Keep `agentURI` + `agentWallet` in env. CI never mints.
 
+## Metropolis demo
+
+Three-minute judge path: live stamp, then the receipts page. Shot list, spoken script, checklist, and a profile blurb: [docs/DEMO.md](docs/DEMO.md).
+
 ## Metropolis
 
 Track 01 — **Onchain Finance & Trading**. Pitch, non-claims, and judge path: [docs/metropolis.md](docs/metropolis.md).
@@ -231,7 +235,7 @@ contracts/     PulseTradeStamp (Foundry) + deployed addresses
 agent/         Go 1.22 module — audit, outcome, policy, stamp, demo CLI
 agent/erc8004  optional identity shell (no live mint)
 web/           static receipts page (read-only RPC)
-docs/          audit schema + Metropolis write-up
+docs/          audit schema, Metropolis pitch, demo script
 ```
 
 ## License

@@ -39,6 +39,8 @@ That is the closed loop judges can replay from JSONL + explorer events.
 
 ## Demo path (under 3 minutes)
 
+Timed shot list, narration, checklist, and profile blurb: [DEMO.md](DEMO.md).
+
 ```bash
 cd contracts && forge test
 cd ../agent && go test ./... && go run ./cmd/pulse demo
