@@ -3,11 +3,13 @@ package stamp
 import (
 	"context"
 	"crypto/ecdsa"
+	"encoding/hex"
 	"fmt"
 	"math/big"
 	"os"
 	"strings"
 
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -30,10 +32,15 @@ type Config struct {
 }
 
 type Result struct {
-	Calldata string `json:"calldata"`
-	To       string `json:"to"`
-	DryRun   bool   `json:"dry_run"`
-	TxHash   string `json:"tx_hash,omitempty"`
+	Calldata             string `json:"calldata"`
+	To                   string `json:"to"`
+	DryRun               bool   `json:"dry_run"`
+	TxHash               string `json:"tx_hash,omitempty"`
+	ExplorerURL          string `json:"explorer_url,omitempty"`
+	ReceiptID            string `json:"receipt_id,omitempty"`
+	OnchainDecisionHash  string `json:"onchain_decision_hash,omitempty"`
+	HashMatch            bool   `json:"hash_match,omitempty"`
+	ReadbackErr          string `json:"readback_err,omitempty"`
 }
 
 func FromEnv() (Config, error) {
@@ -50,7 +57,10 @@ func FromEnv() (Config, error) {
 		return Config{}, fmt.Errorf("stamp: invalid PULSE_TRADE_STAMP %q", addr)
 	}
 	dry := true
-	if v := strings.ToLower(os.Getenv("PULSE_DRY_RUN")); v == "false" || v == "0" || v == "no" {
+	if v := strings.ToLower(strings.TrimSpace(os.Getenv("PULSE_DRY_RUN"))); v == "false" || v == "0" || v == "no" {
+		dry = false
+	}
+	if WantLiveFromEnv() {
 		dry = false
 	}
 	cfg := Config{
@@ -76,7 +86,7 @@ func getenv(k, def string) string {
 	return def
 }
 
-// Stamp encodes calldata and either returns it (dry-run) or sends the tx.
+// Stamp encodes calldata and either returns it (dry-run) or broadcasts on Monad.
 func (c Config) Stamp(ctx context.Context, req Request) (*Result, error) {
 	data, err := EncodeCalldata(req)
 	if err != nil {
@@ -91,13 +101,28 @@ func (c Config) Stamp(ctx context.Context, req Request) (*Result, error) {
 		return out, nil
 	}
 	if c.PrivateKey == nil {
-		return nil, fmt.Errorf("stamp: live send requires PRIVATE_KEY (or keep PULSE_DRY_RUN=true)")
+		return nil, fmt.Errorf("stamp: live send requires PRIVATE_KEY (use dry-run, or set --live / PULSE_STAMP_LIVE=1 with a funded testnet key)")
 	}
+	if strings.TrimSpace(c.RPC) == "" {
+		return nil, fmt.Errorf("stamp: live send requires MONAD_RPC_URL")
+	}
+	if (c.Contract == common.Address{}) {
+		return nil, fmt.Errorf("stamp: live send requires PULSE_TRADE_STAMP")
+	}
+
 	client, err := ethclient.DialContext(ctx, c.RPC)
 	if err != nil {
 		return nil, fmt.Errorf("stamp: rpc: %w", err)
 	}
 	defer client.Close()
+
+	onchainID, err := client.ChainID(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("stamp: chain id: %w", err)
+	}
+	if c.ChainID != 0 && onchainID.Int64() != c.ChainID {
+		return nil, fmt.Errorf("stamp: RPC chain id %s != configured %d", onchainID, c.ChainID)
+	}
 
 	from := crypto.PubkeyToAddress(c.PrivateKey.PublicKey)
 	nonce, err := client.PendingNonceAt(ctx, from)
@@ -108,9 +133,12 @@ func (c Config) Stamp(ctx context.Context, req Request) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	gas := uint64(200_000)
+	gas := uint64(250_000)
+	if est, err := client.EstimateGas(ctx, ethereum.CallMsg{From: from, To: &c.Contract, Data: data}); err == nil && est > 0 {
+		gas = est + est/5
+	}
 	tx := types.NewTransaction(nonce, c.Contract, big.NewInt(0), gas, gasPrice, data)
-	signer := types.LatestSignerForChainID(big.NewInt(c.ChainID))
+	signer := types.LatestSignerForChainID(onchainID)
 	signed, err := types.SignTx(tx, signer, c.PrivateKey)
 	if err != nil {
 		return nil, err
@@ -119,5 +147,30 @@ func (c Config) Stamp(ctx context.Context, req Request) (*Result, error) {
 		return nil, fmt.Errorf("stamp: send: %w", err)
 	}
 	out.TxHash = signed.Hash().Hex()
+	out.ExplorerURL = ExplorerTxURL(out.TxHash)
+
+	rcpt, err := waitReceipt(ctx, client, signed.Hash())
+	if err != nil {
+		out.ReadbackErr = err.Error()
+		return out, nil
+	}
+	if rcpt.Status == 0 {
+		out.ReadbackErr = "stamp: transaction reverted"
+		return out, nil
+	}
+	id, err := ParseStampedID(rcpt.Logs)
+	if err != nil {
+		out.ReadbackErr = err.Error()
+		return out, nil
+	}
+	out.ReceiptID = id.String()
+
+	on, err := callGetReceipt(ctx, client, c.Contract, id)
+	if err != nil {
+		out.ReadbackErr = err.Error()
+		return out, nil
+	}
+	out.OnchainDecisionHash = "0x" + hex.EncodeToString(on.DecisionHash[:])
+	out.HashMatch = on.DecisionHash == req.DecisionHash
 	return out, nil
 }

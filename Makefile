@@ -1,4 +1,4 @@
-.PHONY: test demo forge go-test
+.PHONY: test demo demo-live forge go-test
 
 test: forge go-test
 
@@ -10,3 +10,7 @@ go-test:
 
 demo:
 	cd agent && go run ./cmd/pulse demo
+
+# Broadcasts stamp() — needs PRIVATE_KEY + testnet MON. Do not use in CI.
+demo-live:
+	cd agent && go run ./cmd/pulse demo --live
