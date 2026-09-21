@@ -51,6 +51,9 @@ Dry-run prints calldata. `--live` / `PULSE_STAMP_LIVE=1` broadcasts
 URL plus a `getReceipt` hash match. Compare `data/decisions.jsonl`
 `decision_hash` to the on-chain receipt.
 
+Receipts UI (no key): `cd web && python3 -m http.server 8080`, then open
+`http://127.0.0.1:8080` (or `?id=4`). See [Receipts web](../README.md#receipts-web).
+
 ## Fallback narrative
 
 If a judge asks about AI infra rather than trading: the same receipt is

@@ -25,3 +25,6 @@ jobs:
         run: go run ./cmd/pulse demo
         env:
           PULSE_DATA_DIR: /tmp/pulse-ci-data
+      - name: receipts ui smoke
+        working-directory: web
+        run: node --test receipts.test.mjs

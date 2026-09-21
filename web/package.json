@@ -1,0 +1,8 @@
+{
+  "name": "pulse-receipts",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test receipts.test.mjs"
+  }
+}

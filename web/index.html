@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pulse receipts · Monad testnet</title>
+    <style>
+      :root {
+        --bg: #14120e;
+        --raise: #211e18;
+        --ink: #f3ecdf;
+        --muted: #a89a86;
+        --line: rgba(243, 236, 223, 0.14);
+        --lime: #d6ff4a;
+        --sell: #ff5d3a;
+        --hold: #e6d3a1;
+        --link: #d2c4ff;
+        --danger: #ffb4a8;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--ink);
+        background:
+          radial-gradient(900px 420px at 0% -10%, rgba(214, 255, 74, 0.08), transparent 55%),
+          radial-gradient(700px 380px at 100% 0%, rgba(180, 150, 255, 0.1), transparent 50%),
+          var(--bg);
+        font-family: "Iowan Old Style", Palatino, "Palatino Linotype", Georgia, serif;
+      }
+      body, button, input { font-size: 16px; }
+      a { color: var(--link); }
+      a:hover { color: var(--ink); }
+      header, main, footer { width: min(1080px, calc(100% - 2rem)); margin-inline: auto; }
+      header { padding: 2.2rem 0 1rem; }
+      .kicker {
+        margin: 0;
+        font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        font-size: 0.72rem;
+        color: var(--lime);
+      }
+      h1 { margin: 0.25rem 0 0.4rem; font-weight: 500; font-size: clamp(2.4rem, 5vw, 3.6rem); letter-spacing: -0.03em; }
+      .lede { margin: 0; max-width: 38rem; color: var(--muted); }
+      .chainline {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.8rem 1.2rem;
+        margin-top: 1rem;
+        font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+        font-size: 0.85rem;
+      }
+      main { padding-bottom: 3rem; }
+      form {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.6rem;
+        align-items: end;
+        margin: 1.4rem 0 0.8rem;
+      }
+      label { display: grid; gap: 0.3rem; color: var(--muted); font-size: 0.85rem; }
+      input {
+        background: var(--raise);
+        color: var(--ink);
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 0.55rem 0.9rem;
+        min-width: 8rem;
+        font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      }
+      button, .ghost {
+        border-radius: 999px;
+        border: 1px solid var(--lime);
+        background: var(--lime);
+        color: #1a2200;
+        padding: 0.55rem 0.95rem;
+        font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+        cursor: pointer;
+      }
+      button.ghost { background: transparent; color: var(--ink); border-color: var(--line); }
+      button:focus-visible, input:focus-visible, a:focus-visible {
+        outline: 2px solid var(--lime);
+        outline-offset: 2px;
+      }
+      #status { min-height: 1.4rem; color: var(--muted); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.85rem; }
+      #status.error { color: var(--danger); }
+      #focus {
+        margin: 0.8rem 0 1rem;
+        padding: 1rem 1.1rem;
+        background: var(--raise);
+        border: 1px solid var(--line);
+        border-left: 4px solid var(--lime);
+      }
+      #focus h2 { margin: 0 0 0.6rem; font-size: 1.3rem; }
+      dl { display: grid; grid-template-columns: 9rem 1fr; gap: 0.35rem 0.8rem; margin: 0; }
+      dt { color: var(--muted); }
+      dd { margin: 0; overflow-wrap: anywhere; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.86rem; }
+      .tx-line { margin-top: 0.7rem; font-family: ui-monospace, Menlo, Consolas, monospace; }
+      .table-wrap { overflow-x: auto; border-top: 1px solid var(--line); }
+      table { width: 100%; border-collapse: collapse; min-width: 720px; }
+      th, td {
+        text-align: left;
+        padding: 0.75rem 0.6rem;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+        font-family: ui-monospace, Menlo, Consolas, monospace;
+        font-size: 0.82rem;
+      }
+      th { color: var(--muted); font-weight: 500; font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; }
+      tr.active { background: rgba(214, 255, 74, 0.08); box-shadow: inset 3px 0 0 var(--lime); }
+      td strong { display: block; font-weight: 600; }
+      .note { display: block; margin-top: 0.2rem; color: var(--muted); max-width: 28rem; overflow-wrap: anywhere; }
+      .act {
+        display: inline-block;
+        min-width: 3.4rem;
+        text-align: center;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-size: 0.68rem;
+        padding: 0.15rem 0.35rem;
+        border: 1px solid currentColor;
+      }
+      .act.buy { color: var(--lime); }
+      .act.sell { color: var(--sell); }
+      .act.hold { color: var(--hold); }
+      button.hash {
+        background: none;
+        border: 0;
+        color: var(--ink);
+        padding: 0;
+        border-radius: 0;
+        cursor: pointer;
+        font: inherit;
+      }
+      .pending { color: var(--muted); }
+      #empty { color: var(--muted); }
+      footer {
+        padding-bottom: 2rem;
+        color: var(--muted);
+        font-size: 0.85rem;
+        font-family: ui-monospace, Menlo, Consolas, monospace;
+      }
+      @media (max-width: 720px) {
+        dl { grid-template-columns: 1fr; }
+        .table-wrap { overflow: visible; border-top: 0; }
+        table { min-width: 0; }
+        thead { display: none; }
+        tr { display: block; padding: 0.85rem 0; border-bottom: 1px solid var(--line); }
+        td { display: grid; grid-template-columns: 7.2rem 1fr; gap: 0.4rem; border: 0; padding: 0.2rem 0; }
+        td::before { content: attr(data-label); color: var(--muted); }
+        tr.active { background: transparent; border-left: 3px solid var(--lime); padding-left: 0.6rem; }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <p class="kicker">Pulse on Monad</p>
+      <h1>Receipts</h1>
+      <p class="lede">
+        Last stamped decisions on PulseTradeStamp. Read-only: id, symbol / note, action, decisionHash, and the MonadVision transaction when the Stamped log is found.
+      </p>
+      <p class="chainline">
+        <span id="chain">chain 10143</span>
+        <a id="contract-link" href="https://testnet.monadvision.com/address/0x6eC692C5792AD122c459AC8Df3FDF67eE80842F4">contract</a>
+      </p>
+    </header>
+    <main>
+      <form id="lookup">
+        <label>
+          Receipt id
+          <input id="receipt-id" name="id" inputmode="numeric" autocomplete="off" placeholder="4" />
+        </label>
+        <button type="submit">Look up</button>
+        <button type="button" class="ghost" id="refresh">Refresh</button>
+      </form>
+      <p id="status" role="status">Loading…</p>
+      <section id="focus" hidden></section>
+      <p id="empty" hidden>No receipts yet. Stamp one with <code>go run ./cmd/pulse demo --live</code>.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Id</th>
+              <th>Symbol / note</th>
+              <th>Action</th>
+              <th>decisionHash</th>
+              <th>Tx</th>
+              <th>Stamped</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </main>
+    <footer>
+      <p id="meta"></p>
+      <p>Symbol #1 is the demo BTC quote. Other ids stay numeric. Override with <code>?rpc=</code> <code>?contract=</code> <code>?chainId=</code> <code>?n=</code> <code>?id=</code>.</p>
+    </footer>
+    <noscript>This page needs JavaScript to read the Monad testnet RPC.</noscript>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
