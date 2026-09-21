@@ -37,7 +37,7 @@ On Monad, `stamp(bytes32 decisionHash, …)` stores that 32-byte keccak.
 | `inputs_hash` | hex | keccak of that step's inputs |
 | `outputs` | object | Short summary, not a full dump of market data |
 | `risk` | object? | `{pass, reason}` on the hard-risk step |
-| `jev` | object? | `{prompt, verdict, reason}` when the soft gate ran |
+| `jev` | object? | `{prompt, verdict, reason, model_id, questions, answers}` — I/O summary only; never an API key |
 
 ## Outcome store (`data/outcomes.jsonl`)
 

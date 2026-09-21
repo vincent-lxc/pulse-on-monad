@@ -62,7 +62,7 @@ The chain stores a **receipt**, not the trade. Anyone can recompute keccak over 
 - **Rules adapt.** Labeled outcomes move strategy weights (`momentum`, `mean_reversion`, `conservative`). That is the PRIMARY loop.
 - **Hard risk does not adapt looser.** Limits live in code. Feedback may keep them or tighten them (smaller max position / daily loss, longer cooldown, smaller allowlist). It cannot add symbols or raise caps.
 - **Kronos is not online-trained here.** Optional feature sidecar; default is passthrough (`source=off`).
-- **Jev is not online-trained here.** Optional LLM soft gate. Without `JEV_API_KEY` it stubs `PASS` and still records the prompt, which includes a recent-outcome summary for the next turn.
+- **Jev is not online-trained here.** Optional TypeSafe soft gate (`jev-latest` via `/v1/systemone`). Without `TYPESAFE_API_KEY` / `JEV_API_KEY` it stubs `PASS` and still records the state (including a recent-outcome summary) for the next turn.
 
 Planner → risk → executor follows the Pulse Agent split (conservative planner, fail-closed risk, sim executor). Risk never invents a trade.
 
@@ -135,13 +135,51 @@ Copy `.env.example`. **Never commit a real key.**
 | `PULSE_LIVE_STAMP` | unset | Legacy alias of `PULSE_STAMP_LIVE` |
 | `PULSE_AGENT_ID` | `pulse-demo` | Written to audit + stamp `note` |
 | `PULSE_DATA_DIR` | `./data` | JSONL + `policy.json` |
-| `JEV_API_KEY` | _(empty)_ | Soft gate; stub if unset |
+| `TYPESAFE_API_KEY` | _(empty)_ | Native TypeSafe Jev; stub if unset |
+| `JEV_API_KEY` | _(empty)_ | Alias for `TYPESAFE_API_KEY` |
+| `TYPESAFE_JEV_URL` | `https://api.typesafe.ai/v1/systemone` | Override / optional Vercel gateway |
+| `TYPESAFE_JEV_MODEL` | `jev-latest` | Jev model id |
+| `TYPESAFE_JEV_THRESHOLD` | `0.5` | `allow_action` noul pass cut |
 | `CMC_API_KEY` | _(empty)_ | Reserved for a live quote adapter |
 | `KRONOS_SIDECAR_URL` | _(empty)_ | Optional feature sidecar |
 | `ERC8004_IDENTITY_REGISTRY` | `0x8004A818…BD9e` | Identity Registry |
 | `ERC8004_AGENT_URI` | _(empty)_ | Agent card URI (stub) |
 | `ERC8004_AGENT_WALLET` | _(empty)_ | Settlement wallet (stub) |
 | `ERC8004_AGENT_ID` | _(empty)_ | ERC-721 `agentId` after register |
+
+## Native TypeSafe Jev
+
+Soft gate only. **Hard risk stays in Go and always runs first.**
+
+When `TYPESAFE_API_KEY` (or alias `JEV_API_KEY`) is set, the agent `POST`s
+[`https://api.typesafe.ai/v1/systemone`](https://api.typesafe.ai/v1/systemone)
+with `Authorization: Bearer …`, `model: jev-latest`, a `state` string (intent +
+recent outcome summary), and Pulse questions:
+
+| id | type | meaning |
+| --- | --- | --- |
+| `allow_action` | noul | should this action proceed after hard risk passed? |
+| `confidence` | score | how confident should Pulse be? |
+
+`allow_action.noul >= TYPESAFE_JEV_THRESHOLD` (default `0.5`) → pass; otherwise the
+executor holds. HTTP errors fail-closed. The audit step stores model id and a
+question I/O **summary** — never the API key.
+
+```bash
+# stub (default / CI)
+go run ./cmd/pulse demo
+
+# real Jev when the key is in the environment
+export TYPESAFE_API_KEY=…          # or JEV_API_KEY
+go run ./cmd/pulse demo            # uses HTTP
+go run ./cmd/pulse demo --jev      # refuse to stub if the key is missing
+```
+
+Optional **Vercel gateway**: point `TYPESAFE_JEV_URL` at that host’s
+`/v1/systemone` path. Native TypeSafe is the default; the gateway is not required.
+
+Jev is not online-trained in this repo. Pin `TYPESAFE_JEV_MODEL=jev-1.13.0` if
+you need a frozen threshold.
 
 ## ERC-8004 identity shell
 

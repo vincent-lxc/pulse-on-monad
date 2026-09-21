@@ -11,7 +11,8 @@ The product is a **policy loop + receipt**, not a CLOB:
 
 - Rules propose `buy` / `sell` / `hold` from K-lines (optional Kronos features).
 - **Hard risk is code** and fail-closed. Feedback cannot loosen it.
-- Optional Jev is a *soft* gate only (prompt + stub if no API key).
+- Optional Jev is a *soft* gate only (native TypeSafe `/v1/systemone` when
+  `TYPESAFE_API_KEY` is set; stub if no key). Hard risk always runs first.
 - After a risk pass, `PulseTradeStamp.stamp` writes `decisionHash`, symbol,
   size hint, action, and a note that includes `agentId`.
 - Outcomes (PnL or gate-block) label the run and update **rule weights**.
@@ -34,6 +35,7 @@ That is the closed loop judges can replay from JSONL + explorer events.
 - Not a full perp / CLOB engine.
 - Not live funded DEX trading.
 - Kronos and Jev are **not** online-trained here. Rules adapt; models do not.
+  Jev is a typed decision call (`jev-latest`), not a fine-tune.
 
 ## Demo path (under 3 minutes)
 
