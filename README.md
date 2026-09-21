@@ -120,6 +120,28 @@ cd agent && go run ./cmd/pulse demo --live
 
 On success the CLI prints `tx=0x…`, the explorer URL (`https://testnet.monadvision.com/tx/…`), `receipt_id`, and whether `getReceipt(id).decisionHash` **MATCH**es the audit keccak.
 
+## Receipts web
+
+Read-only page for judges. No private key. It calls `nextId` and `getReceipt` on the deployed PulseTradeStamp, then fills MonadVision tx links from `Stamped` logs.
+
+```bash
+cd web && python3 -m http.server 8080
+# open http://127.0.0.1:8080
+```
+
+Or `make receipts`.
+
+What you see: the latest receipts (default 8) with **id**, **symbol / note** (symbol id `1` is the demo BTC quote; the chain stores the number plus `note`), **action** (`hold` / `buy` / `sell`), **decisionHash**, a tx link when the log is found, and the stamp time. Look up any id in the form, or open `http://127.0.0.1:8080/?id=4`. Receipts 3 and 4 on the public testnet deployment should resolve.
+
+Defaults are the Monad testnet contract. Override with query params: `?rpc=` `?contract=` `?chainId=` `?n=` `?id=`.
+
+Smoke check (no network) and optional live read:
+
+```bash
+cd web && node --test receipts.test.mjs
+PULSE_LIVE_SMOKE=1 node --test receipts.live.test.mjs
+```
+
 ## Environment
 
 Copy `.env.example`. **Never commit a real key.**
@@ -208,6 +230,7 @@ Track 01 — **Onchain Finance & Trading**. Pitch, non-claims, and judge path: [
 contracts/     PulseTradeStamp (Foundry) + deployed addresses
 agent/         Go 1.22 module — audit, outcome, policy, stamp, demo CLI
 agent/erc8004  optional identity shell (no live mint)
+web/           static receipts page (read-only RPC)
 docs/          audit schema + Metropolis write-up
 ```
 
