@@ -96,9 +96,29 @@ cd contracts && forge test && cd ..
 cd agent && go test ./... && go run ./cmd/pulse demo
 ```
 
-`pulse demo` runs **one** simulated decision: mock BTC K-line → rules → hard risk → Jev stub → sim fill → JSONL line → **dry-run** `stamp` calldata → fake +1.50 PnL → weight update. It prints the keccak, calldata, and before/after weights. Hard risk numbers stay put.
+`pulse demo` runs **one** simulated decision: mock BTC K-line → rules → hard risk → Jev stub → sim fill → JSONL line → **dry-run** `stamp` calldata → fake +1.50 PnL → weight update. It prints the keccak, calldata, and before/after weights. Hard risk numbers stay put. No key required.
 
 Or: `make test` / `make demo`.
+
+### Live stamp (Monad testnet)
+
+Dry-run is the default (CI / local). To **broadcast** `PulseTradeStamp.stamp` after the audit line:
+
+```bash
+cp .env.example .env          # then edit — never commit .env
+# .env must include:
+#   PRIVATE_KEY=0x...         # throwaway testnet key only
+#   MONAD_RPC_URL=https://testnet-rpc.monad.xyz
+#   PULSE_TRADE_STAMP=0x6eC692C5792AD122c459AC8Df3FDF67eE80842F4
+
+set -a && source .env && set +a
+cd agent && go run ./cmd/pulse demo --live
+# equivalent: PULSE_STAMP_LIVE=1 go run ./cmd/pulse demo
+```
+
+**Warn:** `--live` spends **testnet MON** from `PRIVATE_KEY`. Use a dedicated throwaway wallet. Do not use a mainnet or funded-production key. Fund the address on Monad testnet first.
+
+On success the CLI prints `tx=0x…`, the explorer URL (`https://testnet.monadvision.com/tx/…`), `receipt_id`, and whether `getReceipt(id).decisionHash` **MATCH**es the audit keccak.
 
 ## Environment
 
@@ -109,9 +129,10 @@ Copy `.env.example`. **Never commit a real key.**
 | `MONAD_RPC_URL` | `https://testnet-rpc.monad.xyz` | JSON-RPC |
 | `MONAD_CHAIN_ID` | `10143` | EIP-155 chain id |
 | `PULSE_TRADE_STAMP` | `0x6eC692C5792AD122c459AC8Df3FDF67eE80842F4` | Receipt contract |
-| `PRIVATE_KEY` | _(empty)_ | Live `stamp` only |
+| `PRIVATE_KEY` | _(empty)_ | Live `stamp` only (never commit) |
 | `PULSE_DRY_RUN` | `true` | Encode calldata; do not send |
-| `PULSE_LIVE_STAMP` | unset | Set `1` to allow a real tx from the demo |
+| `PULSE_STAMP_LIVE` | unset | Set `1` (or pass `--live`) to broadcast |
+| `PULSE_LIVE_STAMP` | unset | Legacy alias of `PULSE_STAMP_LIVE` |
 | `PULSE_AGENT_ID` | `pulse-demo` | Written to audit + stamp `note` |
 | `PULSE_DATA_DIR` | `./data` | JSONL + `policy.json` |
 | `JEV_API_KEY` | _(empty)_ | Soft gate; stub if unset |

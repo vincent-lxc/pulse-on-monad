@@ -40,10 +40,14 @@ That is the closed loop judges can replay from JSONL + explorer events.
 ```bash
 cd contracts && forge test
 cd ../agent && go test ./... && go run ./cmd/pulse demo
+# live (needs PRIVATE_KEY + testnet MON; never commit the key):
+# go run ./cmd/pulse demo --live
 ```
 
-Open the explorer link, then the local `data/decisions.jsonl` line whose
-`decision_hash` would be the next `stamp` argument.
+Dry-run prints calldata. `--live` / `PULSE_STAMP_LIVE=1` broadcasts
+`stamp()` and prints the [MonadVision](https://testnet.monadvision.com) tx
+URL plus a `getReceipt` hash match. Compare `data/decisions.jsonl`
+`decision_hash` to the on-chain receipt.
 
 ## Fallback narrative
 

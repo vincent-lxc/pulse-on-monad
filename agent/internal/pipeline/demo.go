@@ -28,6 +28,8 @@ type Config struct {
 	AgentID string
 	DataDir string
 	FakePnL float64
+	// Live broadcasts stamp() on Monad. Default false (dry-run / CI).
+	Live bool
 }
 
 type Result struct {
@@ -50,7 +52,7 @@ func DefaultConfig() Config {
 	if id == "" {
 		id = "pulse-demo"
 	}
-	return Config{AgentID: id, DataDir: dir, FakePnL: 1.50}
+	return Config{AgentID: id, DataDir: dir, FakePnL: 1.50, Live: stamp.WantLiveFromEnv()}
 }
 
 func newRunID() string {
@@ -59,7 +61,7 @@ func newRunID() string {
 	return "run-" + hex.EncodeToString(b[:])
 }
 
-// Run executes one simulated decision → audit → dry-run stamp → fake outcome → weight update.
+// Run executes one simulated decision → audit → stamp (dry-run or live) → fake outcome → weight update.
 func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return nil, err
@@ -143,9 +145,15 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Demo is always dry-run unless the caller cleared DryRun on a live config.
-	if os.Getenv("PULSE_LIVE_STAMP") != "1" {
-		stampCfg.DryRun = true
+	// Demo default is dry-run. Broadcast only when --live or PULSE_STAMP_LIVE is set.
+	stampCfg.DryRun = !cfg.Live
+	if cfg.Live {
+		if stampCfg.PrivateKey == nil {
+			return nil, fmt.Errorf("live stamp: PRIVATE_KEY is required (testnet key only; never commit it)")
+		}
+		if stampCfg.RPC == "" || (stampCfg.Contract == [20]byte{}) {
+			return nil, fmt.Errorf("live stamp: MONAD_RPC_URL and PULSE_TRADE_STAMP are required")
+		}
 	}
 	stampRes, err := stampCfg.Stamp(ctx, stamp.Request{
 		DecisionHash: hash,
@@ -225,8 +233,33 @@ func Format(res *Result) string {
 	fmt.Fprintf(&b, "6. Execute    sim  action=%s  size_hint=%d\n", res.Record.FinalAction, res.Record.SizeHint)
 	fmt.Fprintf(&b, "7. Audit      run_id=%s\n", res.Record.RunID)
 	fmt.Fprintf(&b, "              decisionHash=%s\n", res.Record.DecisionHash)
-	fmt.Fprintf(&b, "8. Stamp      DRY-RUN  to=%s\n", res.Stamp.To)
-	fmt.Fprintf(&b, "              calldata=%s\n", trim(res.Stamp.Calldata, 72))
+	if res.Stamp != nil && !res.Stamp.DryRun {
+		fmt.Fprintf(&b, "8. Stamp      LIVE  to=%s\n", res.Stamp.To)
+		fmt.Fprintf(&b, "              tx=%s\n", res.Stamp.TxHash)
+		fmt.Fprintf(&b, "              explorer=%s\n", res.Stamp.ExplorerURL)
+		if res.Stamp.ReceiptID != "" {
+			match := "MISMATCH"
+			if res.Stamp.HashMatch {
+				match = "MATCH"
+			}
+			fmt.Fprintf(&b, "              receipt_id=%s  on-chain decisionHash %s\n", res.Stamp.ReceiptID, match)
+			if res.Stamp.OnchainDecisionHash != "" {
+				fmt.Fprintf(&b, "              onchain=%s\n", res.Stamp.OnchainDecisionHash)
+			}
+		}
+		if res.Stamp.ReadbackErr != "" {
+			fmt.Fprintf(&b, "              readback: %s\n", res.Stamp.ReadbackErr)
+		}
+	} else {
+		to := ""
+		if res.Stamp != nil {
+			to = res.Stamp.To
+		}
+		fmt.Fprintf(&b, "8. Stamp      DRY-RUN  to=%s\n", to)
+		if res.Stamp != nil {
+			fmt.Fprintf(&b, "              calldata=%s\n", trim(res.Stamp.Calldata, 72))
+		}
+	}
 	fmt.Fprintf(&b, "9. Outcome    kind=%s  pnl=%.2f  label=%s\n", res.Outcome.Kind, res.Outcome.PnL, res.Outcome.Label)
 	fmt.Fprintf(&b, "10. Weights   %s  %.4f → %.4f   (PRIMARY loop)\n",
 		res.Picked.Rule, res.WeightsBefore[res.Picked.Rule], res.WeightsAfter[res.Picked.Rule])
