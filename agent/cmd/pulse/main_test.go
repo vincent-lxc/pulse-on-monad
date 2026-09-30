@@ -32,3 +32,24 @@ func TestParseArgs(t *testing.T) {
 		t.Fatalf("version %+v", f)
 	}
 }
+
+func TestDemoConfigPreservesLiveEnvironment(t *testing.T) {
+	for _, variable := range []string{"PULSE_STAMP_LIVE", "PULSE_LIVE_STAMP"} {
+		t.Run(variable, func(t *testing.T) {
+			t.Setenv("PULSE_STAMP_LIVE", "")
+			t.Setenv("PULSE_LIVE_STAMP", "")
+			t.Setenv(variable, "1")
+			if !demoConfig(parseArgs([]string{"demo"})).Live {
+				t.Fatal("CLI erased live environment")
+			}
+		})
+	}
+	t.Setenv("PULSE_STAMP_LIVE", "")
+	t.Setenv("PULSE_LIVE_STAMP", "")
+	if !demoConfig(parseArgs([]string{"demo", "--live"})).Live {
+		t.Fatal("flag must enable live")
+	}
+	if demoConfig(parseArgs(nil)).Live {
+		t.Fatal("default must stay dry-run")
+	}
+}

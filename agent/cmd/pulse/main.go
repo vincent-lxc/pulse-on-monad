@@ -16,9 +16,7 @@ func main() {
 	flags := parseArgs(os.Args[1:])
 	switch flags.cmd {
 	case "demo":
-		cfg := pipeline.DefaultConfig()
-		cfg.Live = flags.live
-		cfg.ForceJev = flags.jev
+		cfg := demoConfig(flags)
 		res, err := pipeline.Run(context.Background(), cfg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "demo: %v\n", err)
@@ -81,4 +79,11 @@ With TYPESAFE_API_KEY set, demo calls native TypeSafe Jev; otherwise the soft ga
 Env: see repo-root .env.example. Never commit a real private key or TypeSafe key.
 Default stamp is dry-run (CI-safe). --live spends testnet MON.
 `) + "\n"
+}
+
+func demoConfig(flags cliFlags) pipeline.Config {
+	cfg := pipeline.DefaultConfig()
+	cfg.Live = cfg.Live || flags.live
+	cfg.ForceJev = flags.jev
+	return cfg
 }

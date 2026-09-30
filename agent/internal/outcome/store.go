@@ -51,7 +51,10 @@ func (s *Store) Write(o *Outcome) error {
 	defer f.Close()
 	enc := json.NewEncoder(f)
 	enc.SetEscapeHTML(false)
-	return enc.Encode(o)
+	if err := enc.Encode(o); err != nil {
+		return err
+	}
+	return f.Sync()
 }
 
 func (s *Store) Lookup(runID string) (*Outcome, error) {

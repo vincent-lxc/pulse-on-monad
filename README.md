@@ -241,3 +241,22 @@ docs/          audit schema, Metropolis pitch, demo script
 ## License
 
 [MIT](LICENSE)
+
+### Risk state across restarts
+
+Each run exclusively locks its local `PULSE_DATA_DIR` (macOS/Linux; an OS lock
+releases automatically on process exit). Before planning/execution, hard risk
+replays confirmed **simulated fills** from `decisions.jsonl` and realized outcomes
+from `outcomes.jsonl`. Reusing that directory preserves symbol cooldowns and gross
+negative PnL for the current **UTC day**; gains do not refill the daily loss budget.
+New decisions also include the simulated outcome in the sealed audit record, so
+an interrupted outcome append or failed receipt stamp cannot hide a fill/loss.
+Malformed, conflicting, duplicate or hash-invalid history fails closed. Keep the
+history files together; this is local simulation state, not exchange settlement.
+
+A hard-risk block skips Jev, simulates a hold and records a gate-block outcome.
+The simulation audit/outcome is durable before receipt stamping. `--live` and
+`PULSE_STAMP_LIVE=1` (also the legacy alias) both enable live receipt mode; missing
+credentials fail rather than silently switching to dry-run. No key is needed for
+the default demo. Real quotes/fills and real model services remain optional or
+unimplemented as described above.

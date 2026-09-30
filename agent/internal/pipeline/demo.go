@@ -21,6 +21,7 @@ import (
 	"github.com/vincent-lxc/pulse-on-monad/agent/internal/planner"
 	"github.com/vincent-lxc/pulse-on-monad/agent/internal/policy"
 	"github.com/vincent-lxc/pulse-on-monad/agent/internal/risk"
+	"github.com/vincent-lxc/pulse-on-monad/agent/internal/runlock"
 	"github.com/vincent-lxc/pulse-on-monad/agent/internal/stamp"
 )
 
@@ -37,9 +38,9 @@ type Config struct {
 }
 
 type Result struct {
-	Record       audit.Record
-	Stamp        *stamp.Result
-	Outcome      outcome.Outcome
+	Record        audit.Record
+	Stamp         *stamp.Result
+	Outcome       outcome.Outcome
 	WeightsBefore map[string]float64
 	WeightsAfter  map[string]float64
 	RiskBefore    policy.RiskLimits
@@ -67,9 +68,11 @@ func newRunID() string {
 
 // Run executes one simulated decision → audit → stamp (dry-run or live) → fake outcome → weight update.
 func Run(ctx context.Context, cfg Config) (*Result, error) {
-	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
+	unlock, err := runlock.Acquire(cfg.DataDir)
+	if err != nil {
 		return nil, err
 	}
+	defer unlock()
 	polStore := policy.NewStore(filepath.Join(cfg.DataDir, "policy.json"))
 	st, err := polStore.Load()
 	if err != nil {
@@ -96,10 +99,16 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 
 	eng := risk.New(st.Risk)
 	now := time.Now().UTC()
+	if err := eng.Restore(cfg.DataDir, now); err != nil {
+		return nil, err
+	}
 	// Hard risk is code-only and MUST run before the optional Jev soft gate.
 	verdict := eng.Check(intent, now)
 
-	recent, _ := outStore.Recent(5)
+	recent, err := outStore.Recent(5)
+	if err != nil {
+		return nil, err
+	}
 	gate := cfg.Jev
 	if gate == nil {
 		gate = jev.NewFromEnv()
@@ -107,7 +116,10 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if cfg.ForceJev && !gate.Enabled() {
 		return nil, fmt.Errorf("demo --jev requires TYPESAFE_API_KEY or JEV_API_KEY")
 	}
-	soft := gate.Evaluate(ctx, intent, recent)
+	soft := jev.Verdict{Source: "skipped", ModelID: "hard-risk", Reason: "hard risk blocked"}
+	if verdict.Allow {
+		soft = gate.Evaluate(ctx, intent, recent)
+	}
 
 	final := intent
 	if !verdict.Allow {
@@ -146,10 +158,36 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		rec.SizeHint = uint64(verdict.Size)
 	}
 	rec.SymbolID = q.SymbolID
+	o := outcome.Outcome{RunID: rec.RunID, Reason: "demo fake fill", RecordedAt: now.Unix()}
+	switch {
+	case !verdict.Allow:
+		o.Kind = outcome.KindGateBlock
+		o.Gate = "risk"
+		o.Reason = verdict.Reason
+	case !soft.Pass:
+		o.Kind = outcome.KindGateBlock
+		o.Gate = "jev"
+		o.Reason = soft.Reason
+	default:
+		o.Kind = outcome.KindPnL
+		o.PnL = cfg.FakePnL
+		o.Reason = "demo fake pnl"
+	}
+	rec.Steps = append(rec.Steps, audit.Step{Name: "outcome", ModelID: "demo-fake-pnl", ModelVersion: "1", Outputs: audit.MustRaw(o)})
+
 	if err := rec.Seal(); err != nil {
 		return nil, err
 	}
 	if err := auditStore.Append(&rec); err != nil {
+		return nil, err
+	}
+
+	if err := outStore.Write(&o); err != nil {
+		return nil, err
+	}
+
+	st.ApplyOutcome(picked.Rule, o.Label, nil)
+	if err := polStore.Save(st); err != nil {
 		return nil, err
 	}
 
@@ -179,30 +217,6 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		Note:         stamp.NoteForAgent(cfg.AgentID, rec.RunID),
 	})
 	if err != nil {
-		return nil, err
-	}
-
-	o := outcome.Outcome{RunID: rec.RunID, Reason: "demo fake fill"}
-	switch {
-	case !verdict.Allow:
-		o.Kind = outcome.KindGateBlock
-		o.Gate = "risk"
-		o.Reason = verdict.Reason
-	case !soft.Pass:
-		o.Kind = outcome.KindGateBlock
-		o.Gate = "jev"
-		o.Reason = soft.Reason
-	default:
-		o.Kind = outcome.KindPnL
-		o.PnL = cfg.FakePnL
-		o.Reason = "demo fake pnl"
-	}
-	if err := outStore.Write(&o); err != nil {
-		return nil, err
-	}
-
-	st.ApplyOutcome(picked.Rule, o.Label, nil)
-	if err := polStore.Save(st); err != nil {
 		return nil, err
 	}
 

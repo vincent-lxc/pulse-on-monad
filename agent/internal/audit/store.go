@@ -50,7 +50,10 @@ func (s *Store) Append(r *Record) error {
 
 	enc := json.NewEncoder(f)
 	enc.SetEscapeHTML(false)
-	return enc.Encode(r)
+	if err := enc.Encode(r); err != nil {
+		return err
+	}
+	return f.Sync()
 }
 
 func (s *Store) hasRunIDLocked(runID string) (bool, error) {
